@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tebak Cepat</title>
+<style>
+  :root{
+    --bg:#0f1115; --surface:#1a1d24; --surface2:#242832; --text:#f2f3f5; --sub:#9aa0ab;
+    --accent:#4f8cff; --red:#e21b3c; --blue:#1368ce; --yellow:#d89e00; --green:#26890c; --ok:#2ed573;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;}
+  body{margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);}
+  #app{min-height:100%; display:flex; flex-direction:column;}
+  .wrap{flex:1; padding:20px; display:flex; flex-direction:column; align-items:center; gap:16px; text-align:center;}
+  h1{font-size:18px; margin:0;}
+  .hint{color:var(--sub); font-size:13px; max-width:420px;}
+  .room-code{font-size:42px; font-weight:800; letter-spacing:8px; color:var(--accent);}
+  #qrBox{background:#fff; padding:12px; border-radius:14px;}
+  .slots{display:grid; grid-template-columns:repeat(2,1fr); gap:10px; width:100%; max-width:480px;}
+  .slot{background:var(--surface); border-radius:12px; padding:12px; min-height:60px; border:1px solid #2a2e38; font-size:13px;}
+  .slot.empty{color:var(--sub); border-style:dashed; display:flex; align-items:center; justify-content:center;}
+  .score{font-size:22px; font-weight:800; color:var(--accent);}
+  button.primary{background:var(--accent); color:#fff; border:none; padding:14px 28px; border-radius:12px; font-size:16px; font-weight:700;}
+  button.primary:disabled{opacity:.4;}
+  .qtext{font-size:22px; font-weight:700; max-width:560px;}
+  .timer{font-size:14px; color:var(--sub);}
+  .options{display:grid; grid-template-columns:1fr 1fr; gap:10px; width:100%; max-width:480px;}
+  .opt{border-radius:12px; padding:14px; font-size:15px; font-weight:700; color:#fff;}
+  .opt.red{background:var(--red);} .opt.blue{background:var(--blue);}
+  .opt.yellow{background:var(--yellow);} .opt.green{background:var(--green);}
+  .opt.dim{opacity:.35;}
+  .board{width:100%; max-width:480px; text-align:left;}
+  .brow{display:flex; justify-content:space-between; background:var(--surface); padding:10px 14px; border-radius:10px; margin-bottom:6px;}
+
+  /* controller */
+  .nick-form{display:flex; flex-direction:column; gap:14px; width:100%; max-width:300px;}
+  .nick-form input{background:var(--surface2); border:1px solid #333; color:var(--text); padding:14px; border-radius:10px; font-size:16px;}
+  .nick-form button{background:var(--accent); color:#fff; border:none; padding:14px; border-radius:10px; font-size:16px; font-weight:700;}
+  .quiz{display:none; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; gap:8px; width:100%; height:100vh; height:100dvh; padding:8px;}
+  .quiz.show{display:grid;}
+  .qbtn{border:none; border-radius:16px; color:#fff; font-size:42px; display:flex; align-items:center; justify-content:center; position:relative;}
+  .qbtn:disabled{opacity:.3;}
+  .qbtn.red{background:var(--red);} .qbtn.blue{background:var(--blue);}
+  .qbtn.yellow{background:var(--yellow);} .qbtn.green{background:var(--green);}
+  .feedback{position:fixed; inset:0; display:none; align-items:center; justify-content:center; font-size:30px; font-weight:800; color:#fff; z-index:9;}
+  .feedback.show{display:flex;}
+  .feedback.correct{background:rgba(46,213,115,.92);}
+  .feedback.wrong{background:rgba(226,27,60,.92);}
+  .status{position:fixed; top:env(safe-area-inset-top,0px); left:0; margin:10px; font-size:11px; padding:5px 10px; border-radius:999px; background:var(--surface2); z-index:5;}
+</style>
+</head>
+<body>
+<div id="app"><div class="wrap"><p class="hint">Menyiapkan koneksi…</p></div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+const app = document.getElementById('app');
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const COLORS = ['red','blue','yellow','green'];
+const QUESTIONS = [
+  { text:'Ibu kota Indonesia?', options:{red:'Bandung', blue:'Jakarta', yellow:'Surabaya', green:'Medan'}, correct:'blue' },
+  { text:'2 + 5 x 3 = ?', options:{red:'21', blue:'10', yellow:'17', green:'13'}, correct:'yellow' },
+  { text:'Planet terbesar di tata surya?', options:{red:'Mars', blue:'Bumi', yellow:'Venus', green:'Jupiter'}, correct:'green' },
+  { text:'Hewan apa yang disebut raja hutan?', options:{red:'Singa', blue:'Gajah', yellow:'Harimau', green:'Beruang'}, correct:'red' },
+  { text:'Bahasa pemrograman untuk web (selain JS)?', options:{red:'Python', blue:'HTML', yellow:'Excel', green:'Word'}, correct:'blue' },
+];
+
+function randomCode(len){ let s=''; for(let i=0;i<len;i++) s+=CODE_CHARS[Math.floor(Math.random()*CODE_CHARS.length)]; return s; }
+function buildUrl(params){ const u=new URL(location.href); u.search=''; Object.entries(params).forEach(([k,v])=>u.searchParams.set(k,v)); return u.toString(); }
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function main(){
+  const params = new URLSearchParams(location.search);
+  const role = params.get('role');
+  const roomCode = (params.get('room')||'').toUpperCase();
+  let room;
+  try{ room = await claude.use('room'); }catch(e){ room = null; }
+  if(!room){ app.innerHTML = '<div class="wrap"><p class="hint">Fitur real-time tidak tersedia di tampilan ini.</p></div>'; return; }
+  if(role === 'controller' && roomCode) initController(room, roomCode);
+  else initHost(room);
+}
+main();
+
+// ================= HOST =================
+async function initHost(room){
+  const code = randomCode(4);
+  const joinUrl = buildUrl({ role:'controller', room: code });
+  app.innerHTML = `
+    <div class="wrap">
+      <h1>🧠 Tebak Cepat</h1>
+      <div class="room-code">${code}</div>
+      <div id="qrBox"></div>
+      <p class="hint">Scan QR pakai HP (login Claude). Maksimal 4 pemain.</p>
+      <div class="slots" id="slots"></div>
+      <button class="primary" id="startBtn" disabled>Mulai Kuis</button>
+      <div id="gameArea" style="width:100%;max-width:560px;"></div>
+    </div>`;
+  new QRCode(document.getElementById('qrBox'), { text: joinUrl, width:160, height:160 });
+
+  const game = await room.join(code);
+  const slotsEl = document.getElementById('slots');
+  const startBtn = document.getElementById('startBtn');
+  const gameArea = document.getElementById('gameArea');
+  const scores = {}; // peer -> {name, score}
+  let qIndex = -1, answers = {}, timer = null, timeLeft = 0;
+
+  function controllers(){ return game.peers().filter(p => p.presence && p.presence.role==='controller'); }
+
+  function renderSlots(){
+    const ctrls = controllers();
+    slotsEl.innerHTML='';
+    for(let i=0;i<4;i++){
+      const p = ctrls[i];
+      const d = document.createElement('div');
+      if(!p){ d.className='slot empty'; d.textContent=`Menunggu Pemain ${i+1}…`; }
+      else {
+        const sc = scores[p.peer] || {name:p.presence.name||'Pemain', score:0};
+        d.className='slot';
+        d.innerHTML = `<div>${escapeHtml(sc.name)}</div><div class="score">${sc.score}</div>`;
+      }
+      slotsEl.appendChild(d);
+    }
+    startBtn.disabled = ctrls.length < 1;
+  }
+  game.onPeers(() => renderSlots());
+  renderSlots();
+
+  game.on('answer', msg => {
+    if(qIndex < 0 || answers[msg.peer]) return;
+    answers[msg.peer] = { value: (msg.data||{}).value, t: Date.now() };
+  });
+
+  startBtn.addEventListener('click', () => { startBtn.disabled = true; askQuestion(0); });
+
+  function askQuestion(i){
+    qIndex = i; answers = {};
+    const q = QUESTIONS[i];
+    timeLeft = 10;
+    gameArea.innerHTML = `
+      <div class="qtext">${escapeHtml(q.text)}</div>
+      <div class="timer" id="timerTxt">⏱ ${timeLeft}s</div>
+      <div class="options" style="margin-top:10px;">
+        ${COLORS.map(c => `<div class="opt ${c}">${escapeHtml(q.options[c])}</div>`).join('')}
+      </div>`;
+    game.emit('question', { index: i }).catch(()=>{});
+    clearInterval(timer);
+    timer = setInterval(() => {
+      timeLeft--;
+      const t = document.getElementById('timerTxt');
+      if(t) t.textContent = `⏱ ${Math.max(timeLeft,0)}s`;
+      if(timeLeft <= 0 || Object.keys(answers).length >= controllers().length){
+        clearInterval(timer); reveal();
+      }
+    }, 1000);
+  }
+
+  function reveal(){
+    const q = QUESTIONS[qIndex];
+    const ctrls = controllers();
+    ctrls.forEach((p,idx) => {
+      const a = answers[p.peer];
+      if(!scores[p.peer]) scores[p.peer] = { name:p.presence.name||'Pemain', score:0 };
+      if(a && a.value === q.correct) scores[p.peer].score += 100;
+    });
+    game.emit('reveal', { correct: q.correct }).catch(()=>{});
+    gameArea.innerHTML = `
+      <div class="qtext">Jawaban benar: <b>${escapeHtml(q.options[q.correct])}</b></div>
+      <div class="board" style="margin-top:12px;">
+        ${ctrls.map(p => {
+          const sc = scores[p.peer] || {name:'Pemain',score:0};
+          return `<div class="brow"><span>${escapeHtml(sc.name)}</span><span>${sc.score}</span></div>`;
+        }).join('')}
+      </div>
+      <button class="primary" id="nextBtn" style="margin-top:14px;">${qIndex < QUESTIONS.length-1 ? 'Soal Berikutnya' : 'Lihat Hasil Akhir'}</button>`;
+    renderSlots();
+    document.getElementById('nextBtn').addEventListener('click', () => {
+      if(qIndex < QUESTIONS.length - 1) askQuestion(qIndex+1);
+      else finalResult();
+    });
+  }
+
+  function finalResult(){
+    qIndex = -1;
+    const ranked = controllers().map(p => scores[p.peer] || {name:'Pemain',score:0}).sort((a,b)=>b.score-a.score);
+    gameArea.innerHTML = `
+      <div class="qtext">🏆 Hasil Akhir</div>
+      <div class="board" style="margin-top:12px;">
+        ${ranked.map((s,i) => `<div class="brow"><span>${i+1}. ${escapeHtml(s.name)}</span><span>${s.score}</span></div>`).join('')}
+      </div>
+      <button class="primary" id="againBtn" style="margin-top:14px;">Main Lagi</button>`;
+    document.getElementById('againBtn').addEventListener('click', () => { Object.keys(scores).forEach(k=>scores[k].score=0); askQuestion(0); });
+  }
+}
+
+// ================= CONTROLLER =================
+async function initController(room, code){
+  app.innerHTML = `
+    <div class="wrap" style="justify-content:center; height:100vh;">
+      <form class="nick-form" id="nickForm">
+        <h1 style="margin:0 0 4px 0;">Join Kuis ${escapeHtml(code)}</h1>
+        <input id="nickInput" maxlength="14" placeholder="Nama kamu" required autocomplete="off">
+        <button type="submit">Gabung</button>
+      </form>
+    </div>`;
+  document.getElementById('nickForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const name = document.getElementById('nickInput').value.trim() || 'Pemain';
+    await startController(room, code, name);
+  });
+}
+
+async function startController(room, code, name){
+  const game = await room.join(code);
+  const ctrlsBefore = game.peers().filter(p => p.presence && p.presence.role==='controller').length;
+  if(ctrlsBefore >= 4){
+    app.innerHTML = '<div class="wrap" style="height:100vh;justify-content:center;"><p class="hint">Room penuh (4 pemain). Minta host buka room baru.</p></div>';
+    return;
+  }
+  app.innerHTML = `
+    <div class="status" id="status">menyambung…</div>
+    <div class="quiz" id="quiz">
+      <button class="qbtn red" data-ans="red" disabled>▲</button>
+      <button class="qbtn blue" data-ans="blue" disabled>◆</button>
+      <button class="qbtn yellow" data-ans="yellow" disabled>●</button>
+      <button class="qbtn green" data-ans="green" disabled>■</button>
+    </div>
+    <div class="feedback" id="feedback"></div>`;
+  document.getElementById('quiz').classList.add('show');
+  game.onConnection(ok => { document.getElementById('status').textContent = ok ? 'terhubung' : 'terputus'; });
+  await game.presence({ role:'controller', name });
+
+  const buttons = Array.from(document.querySelectorAll('.qbtn'));
+  let answered = false;
+
+  game.on('question', () => {
+    answered = false;
+    buttons.forEach(b => b.disabled = false);
+    document.getElementById('feedback').className = 'feedback';
+  });
+
+  game.on('reveal', msg => {
+    buttons.forEach(b => b.disabled = true);
+    const correct = (msg.data||{}).correct;
+    const fb = document.getElementById('feedback');
+    if(answered === correct){
+      fb.textContent = '✅ Benar!'; fb.className = 'feedback show correct';
+    } else {
+      fb.textContent = '❌ Salah'; fb.className = 'feedback show wrong';
+    }
+    setTimeout(() => { fb.className = 'feedback'; }, 1200);
+  });
+
+  buttons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      if(answered) return;
+      answered = btn.getAttribute('data-ans');
+      buttons.forEach(b => b.disabled = true);
+      game.emit('answer', { value: answered }).catch(()=>{});
+    });
+  });
+}
+</script>
+</body>
+</html>
